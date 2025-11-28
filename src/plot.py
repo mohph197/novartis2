@@ -2,11 +2,12 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 
 
 def merge_pred_true(df_pred: pd.DataFrame, df_true: pd.DataFrame) -> pd.DataFrame:
     return df_pred.merge(
-        df_pred,
+        df_true,
         how='left',
         on=['country', 'brand_name', 'months_postgx'],
         validate='one_to_one'
@@ -75,3 +76,79 @@ def plot_static_samples(df_pred: pd.DataFrame, df_true: pd.DataFrame, n_samples=
         axes[j].axis('off')
 
     plt.show()
+
+
+def plot_interactive_comparison(df_pred: pd.DataFrame, df_true: pd.DataFrame):
+    """
+    Creates a single interactive Plotly chart with a dropdown menu
+    to switch between all country-brand combinations.
+    """
+    df = merge_pred_true(df_pred, df_true)
+
+    print("Generating Interactive Plotly Chart...")
+
+    # Create combo_id if it doesn't exist
+    if 'combo_id' not in df.columns:
+        df = df.copy()
+        df['combo_id'] = df['country'].astype(str) + " - " + df['brand_name'].astype(str)
+
+    unique_combos = df['combo_id'].unique()
+
+    if len(unique_combos) == 0:
+        print("No data to plot.")
+        return
+
+    fig = go.Figure()
+
+    # Add traces for ALL combinations (Hidden by default)
+    # We add them in pairs: (Volume, Value True)
+    for combo in unique_combos:
+        subset = df[df['combo_id'] == combo]
+
+        # Trace 1: Prediction (Volume)
+        fig.add_trace(go.Scatter(
+            x=subset['months_postgx'],
+            y=subset['volume'],
+            name='Prediction',
+            visible=False,
+            line=dict(color='#1f77b4', width=2)
+        ))
+
+        # Trace 2: Actual (Value True)
+        fig.add_trace(go.Scatter(
+            x=subset['months_postgx'],
+            y=subset['vol_true'],
+            name='Actual',
+            visible=False,
+            line=dict(color='#ff7f0e', width=2, dash='dash')
+        ))
+
+    # Make the first combination visible initially
+    if len(fig.data) > 0:
+        fig.data[0].visible = True
+        fig.data[1].visible = True
+
+    # Create Dropdown Menu
+    steps = []
+    for i, combo in enumerate(unique_combos):
+        step = dict(
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": f"Prediction vs Actual: {combo}"}],
+            label=combo
+        )
+        # Toggle the specific pair of traces for this combo
+        # Since we added them in pairs, indices are 2*i and 2*i + 1
+        step["args"][0]["visible"][2*i] = True     # Volume
+        step["args"][0]["visible"][2*i + 1] = True # Value True
+        steps.append(step)
+
+    fig.update_layout(
+        updatemenus=[dict(active=0, buttons=steps)],
+        title=f"Prediction vs Actual: {unique_combos[0]}",
+        xaxis_title="Months Post GX",
+        yaxis_title="Units",
+        template="plotly_white"
+    )
+
+    fig.show()

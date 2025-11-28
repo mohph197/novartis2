@@ -1,75 +1,173 @@
+# -*- coding: utf-8 -*-
+"""
+Helper file to locally compute Datathon 2025 Metrics.
+This file is intended to be used by participants to test the metrics
+using custom train/validation splits and also to generate submission files.
+
+Metrics supported:
+- Metric 1 (Phase 1-a): 0 actuals
+- Metric 2 (Phase 1-b): 6 actuals
+"""
+
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-def metric_s1(df: pd.DataFrame, df_true: pd.DataFrame):
-    df = df.merge(df_true, on=["country", "brand_name", "months_postgx"], validate="one_to_one")
+# ------------------------------------------------------------------
+# Metric 1 (Phase 1-a)
+# ------------------------------------------------------------------
 
-    results = []
+def _compute_pe_phase1a(group: pd.DataFrame) -> float:
+    """Compute PE for one (country, brand, bucket) group following the corrected Metric 1 formula."""
+    avg_vol = group["avg_vol"].iloc[0]
+    if avg_vol == 0 or np.isnan(avg_vol):
+        return np.nan
 
-    for _, g in df.groupby(["country", "brand_name"]):
-        y_true = g["vol_true"].values
-        y_pred = g["volume"].values
-        m = g["months_postgx"].values
-        avg = g["Avgj"].iloc[0]
+    def sum_abs_diff(month_start: int, month_end: int) -> float:
+        """Sum of absolute differences sum(|actual - pred|)."""
+        subset = group[(group["months_postgx"] >= month_start) & (group["months_postgx"] <= month_end)]
+        return (subset["volume_actual"] - subset["volume_predict"]).abs().sum()
 
-        # Monthly error (0-23)
-        mask_0_23 = (m >= 0) & (m <= 23)
-        monthly_err = np.abs(y_true[mask_0_23] - y_pred[mask_0_23]).sum() / (24 * avg)
+    def abs_sum_diff(month_start: int, month_end: int) -> float:
+        """Absolute difference of |sum(actuals) - sum(pred)|."""
+        subset = group[(group["months_postgx"] >= month_start) & (group["months_postgx"] <= month_end)]
+        sum_actual = subset["volume_actual"].sum()
+        sum_pred = subset["volume_predict"].sum()
+        return abs(sum_actual - sum_pred)
 
-        # Accumulated error 0–5
-        mask_0_5 = (m >= 0) & (m <= 5)
-        acc_0_5 = np.abs(y_true[mask_0_5].sum() - y_pred[mask_0_5].sum()) / (6 * avg)
+    term1 = 0.2 * sum_abs_diff(0, 23) / (24 * avg_vol)
+    term2 = 0.5 * abs_sum_diff(0, 5) / (6 * avg_vol)
+    term3 = 0.2 * abs_sum_diff(6, 11) / (6 * avg_vol)
+    term4 = 0.1 * abs_sum_diff(12, 23) / (12 * avg_vol)
 
-        # Accumulated error 6–11
-        mask_6_11 = (m >= 6) & (m <= 11)
-        acc_6_11 = np.abs(y_true[mask_6_11].sum() - y_pred[mask_6_11].sum()) / (6 * avg)
-
-        # Accumulated error 12–23
-        mask_12_23 = (m >= 12) & (m <= 23)
-        acc_12_23 = np.abs(y_true[mask_12_23].sum() - y_pred[mask_12_23].sum()) / (12 * avg)
-
-        # Weighted sum
-        pe = (
-            0.2 * monthly_err +
-            0.5 * acc_0_5 +
-            0.2 * acc_6_11 +
-            0.1 * acc_12_23
-        )
-
-        results.append(pe)
-
-    return np.mean(results)
+    return term1 + term2 + term3 + term4
 
 
-def metric_s2(df: pd.DataFrame, df_true: pd.DataFrame):
-    df = df.merge(df_true, on=["country", "brand_name", "months_postgx"], validate="one_to_one")
+def _metric1(df_actual: pd.DataFrame, df_pred: pd.DataFrame, df_aux: pd.DataFrame) -> float:
+    """Compute Metric 1 PE value.
 
-    results = []
+    :param df_actual: Actual volume data
+    :param df_pred: Predicted volume data
+    :param df_aux: Auxiliary data with buckets and avg_vol
+    :return: Weighted PE total (Phase 1)
+    """
+    merged = df_actual.merge(
+        df_pred,
+        on=["country", "brand_name", "months_postgx"],
+        how="inner",
+        suffixes=("_actual", "_predict")
+    ).merge(df_aux, on=["country", "brand_name"], how="left")
 
-    for _, g in df.groupby(["country", "brand_name"]):
-        y_true = g["vol_true"].values
-        y_pred = g["volume"].values
-        m = g["months_postgx"].values
-        avg = g["Avgj"].iloc[0]
+    merged["start_month"] = merged.groupby(["country", "brand_name"])["months_postgx"].transform("min")
+    merged = merged[merged["start_month"] == 0].copy()
 
-        # Monthly error (6-23)
-        mask_6_23 = (m >= 6) & (m <= 23)
-        monthly_err = np.abs(y_true[mask_6_23] - y_pred[mask_6_23]).sum() / (18 * avg)
+    pe_results = (
+        merged.groupby(["country", "brand_name", "bucket"])
+        .apply(_compute_pe_phase1a)
+        .reset_index(name="PE")
+    )
 
-        # Accumulated error 6–11
-        mask_6_11 = (m >= 6) & (m <= 11)
-        acc_6_11 = np.abs(y_true[mask_6_11].sum() - y_pred[mask_6_11].sum()) / (6 * avg)
+    bucket1 = pe_results[pe_results["bucket"] == 1]
+    bucket2 = pe_results[pe_results["bucket"] == 2]
 
-        # Accumulated error 12–23
-        mask_12_23 = (m >= 12) & (m <= 23)
-        acc_12_23 = np.abs(y_true[mask_12_23].sum() - y_pred[mask_12_23].sum()) / (12 * avg)
+    n1 = bucket1[["country", "brand_name"]].drop_duplicates().shape[0]
+    n2 = bucket2[["country", "brand_name"]].drop_duplicates().shape[0]
 
-        pe = (
-            0.2 * monthly_err +
-            0.5 * acc_6_11 +
-            0.3 * acc_12_23
-        )
+    return (2/n1) * bucket1["PE"].sum() + (1/n2) * bucket2["PE"].sum()
 
-        results.append(pe)
 
-    return np.mean(results)
+def compute_metric1(
+    df_actual: pd.DataFrame,
+    df_pred: pd.DataFrame,
+    df_aux: pd.DataFrame) -> float:
+    """Compute Metric 1 (Phase 1).
+
+    :param df_actual: Actual volume data
+    :param df_pred: Predicted volume data
+    :param df_aux: Auxiliary data with buckets and avg_vol
+    :return: Computed Metric 1 value
+    """
+    df_actual = df_actual.rename(columns={'vol_true': 'volume'})
+    return round(_metric1(df_actual, df_pred, df_aux), 4)
+
+
+# ------------------------------------------------------------------
+# Metric 2 (Phase 1-b)
+# ------------------------------------------------------------------
+
+def _compute_pe_phase1b(group: pd.DataFrame) -> float:
+    """Compute PE for a specific country-brand-bucket group.
+
+    :param group: DataFrame group with abs_diff and avg_vol columns
+    :return: PE value for the group
+    """
+    avg_vol = group["avg_vol"].iloc[0]
+    if avg_vol == 0 or np.isnan(avg_vol):
+        return np.nan
+
+    def sum_abs_diff(month_start: int, month_end: int) -> float:
+        """Sum of absolute differences sum(|actual - pred|)."""
+        subset = group[(group["months_postgx"] >= month_start) & (group["months_postgx"] <= month_end)]
+        return (subset["volume_actual"] - subset["volume_predict"]).abs().sum()
+
+    def abs_sum_diff(month_start: int, month_end: int) -> float:
+        """Absolute difference of |sum(actuals) - sum(pred)|."""
+        subset = group[(group["months_postgx"] >= month_start) & (group["months_postgx"] <= month_end)]
+        sum_actual = subset["volume_actual"].sum()
+        sum_pred = subset["volume_predict"].sum()
+        return abs(sum_actual - sum_pred)
+
+    term1 = 0.2 * sum_abs_diff(6, 23) / (18 * avg_vol)
+    term2 = 0.5 * abs_sum_diff(6, 11) / (6 * avg_vol)
+    term3 = 0.3 * abs_sum_diff(12, 23) / (12 * avg_vol)
+
+    return term1 + term2 + term3
+
+
+def _metric2(df_actual: pd.DataFrame, df_pred: pd.DataFrame, df_aux: pd.DataFrame) -> float:
+    """Compute Metric 2 PE value.
+
+    :param df_actual: Actual volume data
+    :param df_pred: Predicted volume data
+    :param df_aux: Auxiliary data with buckets and avg_vol
+    :return: Weighted PE total (Phase 2)
+    """
+    merged_data = df_actual.merge(
+        df_pred,
+        on=["country", "brand_name", "months_postgx"],
+        how="inner",
+        suffixes=("_actual", "_predict")
+    ).merge(df_aux, on=["country", "brand_name"], how="left")
+
+    merged_data["start_month"] = merged_data.groupby(["country", "brand_name"])["months_postgx"].transform("min")
+    merged_data = merged_data[merged_data["start_month"] == 6].copy()
+
+    pe_results = (
+        merged_data.groupby(["country", "brand_name", "bucket"])
+        .apply(_compute_pe_phase1b)
+        .reset_index(name="PE")
+    )
+
+    bucket1 = pe_results[pe_results["bucket"] == 1]
+    bucket2 = pe_results[pe_results["bucket"] == 2]
+
+    n1 = bucket1[["country", "brand_name"]].drop_duplicates().shape[0]
+    n2 = bucket2[["country", "brand_name"]].drop_duplicates().shape[0]
+
+    return (2/n1) * bucket1["PE"].sum() + (1/n2) * bucket2["PE"].sum()
+
+
+def compute_metric2(
+    df_actual: pd.DataFrame,
+    df_pred: pd.DataFrame,
+    df_aux: pd.DataFrame) -> float:
+    """Compute Metric 2 (Phase 2).
+
+    :param df_actual: Actual volume data
+    :param df_pred: Predicted volume data
+    :param df_aux: Auxiliary data with buckets and avg_vol
+    :return: Computed Metric 2 value
+    """
+    df_actual = df_actual.rename(columns={'vol_true': 'volume'})
+    return round(_metric2(df_actual, df_pred, df_aux), 4)
