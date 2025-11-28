@@ -139,6 +139,35 @@ def add_lags(df: pd.DataFrame, lags=LAGS, rolling=ROLLING) -> pd.DataFrame:
     return df
 
 
+def add_weights(df: pd.DataFrame, df_aux: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    df['weight_s1'] = np.nan
+    df['weight_s2'] = np.nan
+
+    df.loc[(df['months_postgx'] >= 0) & (df['months_postgx'] < 6), 'weight_s1'] = 0.5 / 0.8
+    df.loc[(df['months_postgx'] >= 6) & (df['months_postgx'] < 12), 'weight_s1'] = 0.2 / 0.8
+    df.loc[(df['months_postgx'] >= 12) & (df['months_postgx'] < 24), 'weight_s1'] = 0.1 / 0.8
+
+    df.loc[(df['months_postgx'] >= 6) & (df['months_postgx'] < 12), 'weight_s2'] = 0.5 / 0.8
+    df.loc[(df['months_postgx'] >= 12) & (df['months_postgx'] < 24), 'weight_s2'] = 0.3 / 0.8
+
+    df = df.merge(df_aux[['country', 'brand_name', 'bucket']], on=['country', 'brand_name'], how='left', validate='many_to_one')
+    df['bucket_weight'] = df.apply(lambda x: 2 if x['bucket'] == 1 else 1, axis=1)
+    df["weight_s1"] = df['weight_s1'] * df['bucket_weight']
+    df["weight_s2"] = df['weight_s2'] * df['bucket_weight']
+    df = df.drop(columns=['bucket', 'bucket_weight'])
+
+    return df
+
+
+def train_preprocessing(df: pd.DataFrame, df_aux: pd.DataFrame) -> pd.DataFrame:
+    df = add_lags(df)
+    df = add_weights(df, df_aux)
+
+    return df
+
+
 def extend_test(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
 

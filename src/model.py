@@ -34,12 +34,14 @@ num_features.append(f"roll{ROLLING}_std")
 features = cat_features + num_features
 
 
-def fit_model(df: pd.DataFrame, threshold: int, iters=2000, seed=None, verbose=True) -> CatBoostRegressor:
+def fit_model(df: pd.DataFrame, scenario: str, iters=2000, seed=None, verbose=True) -> CatBoostRegressor:
+    threshold = 0 if scenario == "s1" else 6
     train_pool = Pool(
         data=df[df['months_postgx'] >= threshold][features],
         label=df[df['months_postgx'] >= threshold]['target_norm'],
         cat_features=[features.index(c) for c in cat_features]
     )
+    train_pool.set_weight(df[df['months_postgx'] >= threshold][f'weight_{scenario}'])
 
     model = CatBoostRegressor(
         iterations=iters,
