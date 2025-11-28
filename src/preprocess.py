@@ -43,6 +43,19 @@ def compute_avg_and_normalize(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def create_mean_targets(df: pd.DataFrame, rolling_mean: bool) -> pd.DataFrame:
+    df = df.copy()
+
+    if rolling_mean:
+        df['target_norm_avg'] = df.groupby(['country', 'brand_name'])['target_norm'].transform(lambda x: x.rolling(window=6, min_periods=1).mean())
+    else:
+        df['interval_group'] = pd.cut(df['months_postgx'], bins=[-1, 5, 11, 23])
+        df['target_norm_avg'] = df.groupby(['country', 'brand_name', 'interval_group'], observed=True)['target_norm'].transform('mean')
+        df = df.drop(columns=['interval_group'])
+
+    return df
+
+
 def pre_features(df: pd.DataFrame) -> pd.DataFrame:
     pre = df[df["months_postgx"] < 0]
 
@@ -111,12 +124,13 @@ def n_gxs_features(df: pd.DataFrame, lags=LAGS, rolling=ROLLING) -> pd.DataFrame
     return df
 
 
-def general_preprocessing(vol_df: pd.DataFrame, gxs_df: pd.DataFrame, info_df: pd.DataFrame, is_test=False) -> tuple[pd.DataFrame, ...]:
+def general_preprocessing(vol_df: pd.DataFrame, gxs_df: pd.DataFrame, info_df: pd.DataFrame, is_test=False, rolling_mean=False) -> tuple[pd.DataFrame, ...]:
     vol_df['month'] = vol_df["month"].map(month_to_int)
     if is_test:
         vol_df, sub_df = extend_test(vol_df)
     df = merge_dfs(vol_df, gxs_df, info_df)
     df = compute_avg_and_normalize(df)
+    df = create_mean_targets(df, rolling_mean)
     df = pre_features(df)
     df = month_features(df)
     # df = n_gxs_features(df)
