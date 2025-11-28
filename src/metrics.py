@@ -1,23 +1,16 @@
 import numpy as np
 import pandas as pd
 
-def metric_s1(df: pd.DataFrame):
-    """
-    df must contain columns:
-    - target_norm
-    - pred
-    - months_postgx
-    - Avgj
-    - country_brand_id  (integer id for grouping)
-    """
+def metric_s1(df: pd.DataFrame, df_true: pd.DataFrame):
+    df = df.merge(df_true, on=["country", "brand_name", "months_postgx"], validate="one_to_one")
 
     results = []
 
     for _, g in df.groupby(["country", "brand_name"]):
-        avg = g["Avgj"].iloc[0]
-        y_true = g["volume"].values
-        y_pred = g["pred"].values * avg
+        y_true = g["vol_true"].values
+        y_pred = g["volume"].values
         m = g["months_postgx"].values
+        avg = g["Avgj"].iloc[0]
 
         # Monthly error (0-23)
         mask_0_23 = (m >= 0) & (m <= 23)
@@ -48,14 +41,16 @@ def metric_s1(df: pd.DataFrame):
     return np.mean(results)
 
 
-def metric_s2(df: pd.DataFrame):
+def metric_s2(df: pd.DataFrame, df_true: pd.DataFrame):
+    df = df.merge(df_true, on=["country", "brand_name", "months_postgx"], validate="one_to_one")
+
     results = []
 
     for _, g in df.groupby(["country", "brand_name"]):
-        avg = g["Avgj"].iloc[0]
-        y_true = g["volume"].values
-        y_pred = g["pred"].values * avg
+        y_true = g["vol_true"].values
+        y_pred = g["volume"].values
         m = g["months_postgx"].values
+        avg = g["Avgj"].iloc[0]
 
         # Monthly error (6-23)
         mask_6_23 = (m >= 6) & (m <= 23)

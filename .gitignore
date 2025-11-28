@@ -1,2 +1,4 @@
 catboost_info/
 __pycache__/
+submissions/
+models/

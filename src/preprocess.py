@@ -1,5 +1,14 @@
 import pandas as pd
 import numpy as np
+from .consts import LAGS, ROLLING
+from typing import Union
+
+
+month_to_int = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4,
+    "May": 5, "Jun": 6, "Jul": 7, "Aug": 8,
+    "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12
+}
 
 
 def merge_dfs(vol: pd.DataFrame, gxs: pd.DataFrame, info: pd.DataFrame) -> pd.DataFrame:
@@ -84,42 +93,54 @@ def pre_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def month_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df['months_postgx_sin'] = np.sin(df['months_postgx'] * (2.*np.pi/12))
-    df['months_postgx_cos'] = np.cos(df['months_postgx'] * (2.*np.pi/12))
+
+    df['month_sin'] = np.sin(df['month'] * (2.*np.pi/12))
+    df['month_cos'] = np.cos(df['month'] * (2.*np.pi/12))
 
     return df
 
 
-def general_preprocessing(vol_df: pd.DataFrame, gxs_df: pd.DataFrame, info_df: pd.DataFrame) -> pd.DataFrame:
+def n_gxs_features(df: pd.DataFrame, lags=LAGS, rolling=ROLLING) -> pd.DataFrame:
+    df = df.copy()
+
+    for i in range(lags):
+        df[f"ngxs_lag{i+1}"] = df.groupby(["country", "brand_name"])["n_gxs"].shift(i + 1)
+    df['ngxs_roll{r}_mean'.format(r=rolling)] = df.groupby(["country", "brand_name"])["n_gxs"].rolling(rolling).mean().reset_index()['n_gxs']
+    df['ngxs_roll{r}_std'.format(r=rolling)] = df.groupby(["country", "brand_name"])["n_gxs"].rolling(rolling).mean().reset_index()['n_gxs']
+
+    return df
+
+
+def general_preprocessing(vol_df: pd.DataFrame, gxs_df: pd.DataFrame, info_df: pd.DataFrame, is_test=False) -> tuple[pd.DataFrame, ...]:
+    vol_df['month'] = vol_df["month"].map(month_to_int)
+    if is_test:
+        vol_df, sub_df = extend_test(vol_df)
     df = merge_dfs(vol_df, gxs_df, info_df)
     df = compute_avg_and_normalize(df)
     df = pre_features(df)
     df = month_features(df)
+    # df = n_gxs_features(df)
 
-    return df
+    if is_test:
+        return df, sub_df
+
+    df_aux = create_aux(df)
+    return df, df_aux
 
 
-def add_lags(df: pd.DataFrame, lags=3, rolling=5) -> pd.DataFrame:
+def add_lags(df: pd.DataFrame, lags=LAGS, rolling=ROLLING) -> pd.DataFrame:
     df = df.copy()
     for i in range(lags):
         df[f"lag{i+1}"] = df.groupby(["country", "brand_name"])["target_norm"].shift(i + 1)
 
-    df['roll{r}_mean'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].rolling(5).mean().reset_index()['target_norm']
-    df['roll{r}_std'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].rolling(5).mean().reset_index()['target_norm']
+    df['roll{r}_mean'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].rolling(rolling).mean().reset_index()['target_norm']
+    df['roll{r}_std'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].rolling(rolling).mean().reset_index()['target_norm']
 
     return df
 
 
 def extend_test(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
-
-    month_to_int = {
-        "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4,
-        "May": 5, "Jun": 6, "Jul": 7, "Aug": 8,
-        "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12
-    }
-
-    int_to_month = {v: k for k, v in month_to_int.items()}
 
     extended_rows = []
     submission_rows = []
@@ -131,20 +152,18 @@ def extend_test(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         # last pre-gx row (months_postgx = -1)
         last_row = g.iloc[-1]
         last_moth_postgx = last_row["months_postgx"]
-        last_month_str = last_row["month"]
-        last_month_int = month_to_int[last_month_str]
+        last_month = last_row["month"]
 
         # create new rows for horizon months_postgx = 0..23
         for i, h in enumerate(list(range(last_moth_postgx + 1, 24))):
 
             # wrap month: 1..12
-            new_month_int = ((last_month_int + i) % 12) + 1
-            new_month_str = int_to_month[new_month_int]
+            new_month = ((last_month + i) % 12) + 1
 
             extended_rows.append({
                 "country": country,
                 "brand_name": brand,
-                "month": new_month_str,
+                "month": new_month,
                 "months_postgx": h,
                 "volume": np.nan
             })
@@ -168,3 +187,13 @@ def extend_test(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     return df, df_submission
 
+
+def create_aux(df: pd.DataFrame) -> pd.DataFrame:
+    df_aux = df[df['months_postgx'] >= 0].copy()
+    df_aux['volume_norm'] = df_aux['volume'] / df_aux['Avgj']
+    df_aux = df_aux.groupby(['country','brand_name'])['volume_norm'].mean().rename('MGE').reset_index()
+    df_aux['bucket'] = df_aux['MGE'].apply(lambda x: 1 if x <= 0.25 else 2)
+    df_aux = df_aux.drop(columns=['MGE'])
+    df_aux["avg_vol"] = df[df['months_postgx'] >= 0].groupby(["country", "brand_name"])["Avgj"].first().reset_index()["Avgj"]
+
+    return df_aux

@@ -88,6 +88,7 @@ def compute_metric1(
     :param df_aux: Auxiliary data with buckets and avg_vol
     :return: Computed Metric 1 value
     """
+    df_actual = df_actual.rename(columns={'vol_true': 'volume'})
     return round(_metric1(df_actual, df_pred, df_aux), 4)
 
 
@@ -168,53 +169,5 @@ def compute_metric2(
     :param df_aux: Auxiliary data with buckets and avg_vol
     :return: Computed Metric 2 value
     """
+    df_actual = df_actual.rename(columns={'vol_true': 'volume'})
     return round(_metric2(df_actual, df_pred, df_aux), 4)
-
-
-# ------------------------------------------------------------------
-# Workflow example
-# ------------------------------------------------------------------
-if __name__ == "__main__":
-
-    # Paths (adapt as needed)
-    DATA_PATH = Path("data")
-
-    # ---- Load data ----
-    # The auxiliar.metric_computation.csv contains the 'bucket', 'avg_vol', 'country' and 'brand_name'
-    # columns, and should be calculated before running this script based on the train_data.csv file
-    # (take a look at the documentation for details on how to calculate 'bucket' and 'avg_vol').
-    df_aux = pd.read_csv(DATA_PATH / "auxiliar_metric_computation.csv")
-    train_data = pd.read_csv(DATA_PATH / "train_data.csv")
-    submission_data = pd.read_csv(DATA_PATH / "submission_data.csv")
-    submission = pd.read_csv(DATA_PATH / "submission_template.csv")
-
-    # ---- Custom train/validation split ----
-    train, validation = None # your_train_validation_split_function(train_data)
-
-    # ---- Model training ----
-    # Train your model here
-
-    # ---- Predictions on validation set ----
-    prediction = validation.copy()
-    prediction["volume"] = None #model.predict(validation)
-
-    # ---- Compute metrics on validation set ----
-    m1 = compute_metric1(validation, prediction, df_aux)
-    m2 = compute_metric2(validation, prediction, df_aux)
-
-    print(f"Metric 1 - Phase 1-a (local validation): {m1}")
-    print(f"Metric 2 - Phase 1-b (local validation): {m2}")
-
-
-    # ---- Generate submission file ----
-    # Fill in predicted 'volume' values of the submission
-    submission["volume"] = None #model.predict(submission_data)
-
-    # ...
-
-    # Save submission
-    SAVE_PATH = Path("path/to/save/folder")
-    ATTEMPT = "attempt_x"
-    submission.to_csv(SAVE_PATH / f"submission_{ATTEMPT}.csv", sep=",", index=False)
-
-

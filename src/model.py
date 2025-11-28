@@ -1,9 +1,10 @@
 from catboost import CatBoostRegressor, Pool
 import pandas as pd
 import numpy as np
+from .consts import LAGS, ROLLING
 
 cat_features = [
-    'month', 'months_postgx', 'ther_area', 'main_package',
+    'month', 'ther_area', 'main_package',
     'biological', 'small_molecule'
 ]
 
@@ -17,14 +18,23 @@ num_features = [
     't5_std', 't5_min', 't5_max', 't5_trend', 't6_mean', 't6_std', 't6_min',
     't6_max', 't6_trend', 't7_mean', 't7_std', 't7_min', 't7_max',
     't7_trend', 't8_mean', 't8_std', 't8_min', 't8_max', 't8_trend',
-    'months_postgx_sin', 'months_postgx_cos', 'lag1', 'lag2', 'lag3',
-    'roll5_mean', 'roll5_std'
+    'month_sin', 'month_cos', 'months_postgx',
 ]
+
+for i in range(1, LAGS+1):
+    num_features.append(f"lag{i}")
+    # num_features.append(f"ngxs_lag{i}")
+
+num_features.append(f"roll{ROLLING}_mean")
+num_features.append(f"roll{ROLLING}_std")
+# num_features.append(f"ngxs_roll{ROLLING}_mean")
+# num_features.append(f"ngxs_roll{ROLLING}_std")
+
 
 features = cat_features + num_features
 
 
-def fit_model(df: pd.DataFrame, threshold: int, iters=2000, seed=None) -> CatBoostRegressor:
+def fit_model(df: pd.DataFrame, threshold: int, iters=2000, seed=None, verbose=True) -> CatBoostRegressor:
     train_pool = Pool(
         data=df[df['months_postgx'] >= threshold][features],
         label=df[df['months_postgx'] >= threshold]['target_norm'],
@@ -38,13 +48,13 @@ def fit_model(df: pd.DataFrame, threshold: int, iters=2000, seed=None) -> CatBoo
         loss_function="MAE",
         eval_metric="MAE",
         random_seed=seed,
-        verbose=200
+        verbose=200 if verbose else 0
     )
 
     return model.fit(train_pool)
 
 
-def predict(model: CatBoostRegressor, df: pd.DataFrame, threshold: int, lags=3, rolling=5):
+def predict(model: CatBoostRegressor, df: pd.DataFrame, threshold: int, lags=LAGS, rolling=ROLLING):
     preds = []
     buffer_size = max(rolling, lags)
     groups = df.groupby(["country", "brand_name"])
@@ -75,10 +85,11 @@ def predict(model: CatBoostRegressor, df: pd.DataFrame, threshold: int, lags=3, 
 
             # Save prediction
             history.append(pred)
-            g.loc[idx, "pred"] = pred
+            assert np.isnan(g.loc[idx, "target_norm"]) and np.isnan(g.loc[idx, "volume"])
+            g.loc[idx, "target_norm"] = pred
+            g.loc[idx, "volume"] = pred * g.loc[idx, "Avgj"]
 
         preds.append(g)
 
     # Combine predictions
     return pd.concat(preds).sort_index()
-

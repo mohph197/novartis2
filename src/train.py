@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
+from .consts import LAGS, ROLLING
 
 
-def split_train_test(df: pd.DataFrame, test_size=0.3, random_state=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def split_train_test(df: pd.DataFrame, test_size=0.2, random_state=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     # Unique pairs
     pairs = df[["country", "brand_name"]].drop_duplicates()
 
@@ -14,22 +15,31 @@ def split_train_test(df: pd.DataFrame, test_size=0.3, random_state=None) -> tupl
         shuffle=True
     )
 
-    eval_pairs_s1, eval_pairs_s2 = train_test_split(
-        eval_pairs,
-        test_size=0.5,
-        random_state=random_state,
-        shuffle=True
-    )
-
     # Build train and eval dataframes
     train_df = df.merge(train_pairs, on=["country", "brand_name"])
-    eval_df_s1 = df.merge(eval_pairs_s1, on=["country", "brand_name"])
-    eval_df_s2 = df.merge(eval_pairs_s2, on=["country", "brand_name"])
+    eval_df = df.merge(eval_pairs, on=["country", "brand_name"])
 
-    return train_df, eval_df_s1, eval_df_s2
+    return train_df, eval_df, eval_df.copy()
 
 
-def split_true(df: pd.DataFrame, threshold: int, lags=3, rolling=5) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_k_fold(df: pd.DataFrame, k_folds=5, random_state=None):
+    # Unique pairs
+    pairs = df[["country", "brand_name"]].drop_duplicates()
+
+    kf = KFold(n_splits=k_folds, shuffle=True, random_state=random_state)
+
+    for train_index, test_index in kf.split(pairs):
+        train_pairs = pairs.iloc[train_index]
+        eval_pairs = pairs.iloc[test_index]
+
+        # Build train and eval dataframes
+        train_df = df.merge(train_pairs, on=["country", "brand_name"])
+        eval_df = df.merge(eval_pairs, on=["country", "brand_name"])
+
+        yield train_df, eval_df, eval_df.copy()
+
+
+def split_true(df: pd.DataFrame, threshold: int, lags=LAGS, rolling=ROLLING) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
     df_true = df[df['months_postgx'] >= threshold][['country', 'brand_name', 'months_postgx', 'volume']]
     df.loc[df['months_postgx'] >= threshold, 'volume'] = np.nan
@@ -40,7 +50,7 @@ def split_true(df: pd.DataFrame, threshold: int, lags=3, rolling=5) -> tuple[pd.
     df[f"roll{rolling}_std"]  = np.nan
     df["pred"] = np.nan
 
-    return df, df_true
+    return df, df_true.rename(columns={"volume": "vol_true"})
 
 
 def split_scenario(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
