@@ -45,7 +45,7 @@ def pre_features(df: pd.DataFrame) -> pd.DataFrame:
         pre_trend=lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)>1 else 0
     )
 
-    frames = [pre_stats]
+    df = df.merge(pre_stats, on=["country", "brand_name"], how="left", validate="many_to_one")
 
     windows = {
         "t1": (-24, -22),
@@ -57,6 +57,8 @@ def pre_features(df: pd.DataFrame) -> pd.DataFrame:
         "t7": (-6, -4),
         "t8": (-3, -1),
     }
+
+    trimester_frames = []
 
     for name, (start, end) in windows.items():
         tmp = (
@@ -72,12 +74,12 @@ def pre_features(df: pd.DataFrame) -> pd.DataFrame:
                 }
             )
         )
-        frames.append(tmp)
+        trimester_frames.append(tmp)
 
     # Combine trimester stats
-    all_stats = pd.concat(frames, axis=1)
+    trimester_stats = pd.concat(trimester_frames, axis=1)
 
-    return df.merge(all_stats, on=["country", "brand_name"], how="left")
+    return df.merge(trimester_stats, on=["country", "brand_name"], how="left", validate="many_to_one")
 
 
 def month_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -102,8 +104,8 @@ def add_lags(df: pd.DataFrame, lags=3, rolling=5) -> pd.DataFrame:
     for i in range(lags):
         df[f"lag{i+1}"] = df.groupby(["country", "brand_name"])["target_norm"].shift(i + 1)
 
-    df['roll{r}_mean'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].transform(lambda x: x.rolling(window=rolling).mean())
-    df['roll{r}_std'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].transform(lambda x: x.rolling(window=rolling).std())
+    df['roll{r}_mean'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].rolling(5).mean().reset_index()['target_norm']
+    df['roll{r}_std'.format(r=rolling)] = df.groupby(["country", "brand_name"])["target_norm"].rolling(5).mean().reset_index()['target_norm']
 
     return df
 
