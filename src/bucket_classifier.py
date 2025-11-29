@@ -66,11 +66,27 @@ def predict_bucket1_proba(model: CatBoostClassifier, base: pd.DataFrame, scenari
     return model.predict_proba(base[features])[:, 1]
 
 
-def predict_probas(model: CatBoostClassifier, df: pd.DataFrame, scenario: str) -> pd.DataFrame:
+def logit(p, eps=1e-9):
+    p = np.clip(p, eps, 1-eps)
+    return np.log(p/(1-p))
+
+def sigmoid(z):
+    return 1/(1+np.exp(-z))
+
+def shift_probs_to_make_tstar_half(p, t_star):
+    delta = -logit(t_star)
+    return sigmoid(logit(p) + delta)
+
+
+def predict_probas(model: CatBoostClassifier, df: pd.DataFrame, scenario: str, shift=True) -> pd.DataFrame:
     base = build_bucket_dataset(df, None, scenario)
 
     features = cat_features + num_features(scenario)
     probs = model.predict_proba(base[features])
+
+    if shift:
+        probs[:, 1] = shift_probs_to_make_tstar_half(probs[:, 1], 0.04 if scenario == "s1" else 0.5)
+        probs[:, 0] = 1 - probs[:, 1]
 
     df_probs = base[["country", "brand_name"]].copy()
     df_probs["prob_bucket1"] = probs[:, 1]
