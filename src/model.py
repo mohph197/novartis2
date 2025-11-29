@@ -1,4 +1,4 @@
-from catboost import CatBoostRegressor, Pool
+from catboost import CatBoostRegressor, Pool, cv
 import pandas as pd
 import numpy as np
 from .consts import LAGS, ROLLING
@@ -54,6 +54,70 @@ def fit_model(df: pd.DataFrame, scenario: str, iters=2000, seed=None, verbose=Tr
     )
 
     return model.fit(train_pool)
+
+
+def fit_model_cv(df: pd.DataFrame, scenario: str, iters=10000, seed=None, verbose=True, predict_avg=False, folds=3) -> CatBoostRegressor:
+    # 1. Prepare Data (Identical to your original function)
+    threshold = 0 if scenario == "s1" else 6
+
+    # Create the Pool exactly as you did before
+    train_pool = Pool(
+        data=df[df['months_postgx'] >= threshold][features],
+        label=df[df['months_postgx'] >= threshold]['target_norm_avg' if predict_avg else 'target_norm'],
+        cat_features=[features.index(c) for c in cat_features]
+    )
+    # Apply weights to the pool so CV respects them
+    train_pool.set_weight(df[df['months_postgx'] >= threshold][f'weight_{scenario}'])
+
+    # 2. Define Parameters for CV
+    # Note: We move params into a dict to pass to the cv() function
+    params = {
+        'iterations': iters,
+        'learning_rate': 0.01,
+        'depth': 8,
+        'loss_function': "MAE",
+        'eval_metric': "MAE",
+        'random_seed': seed,
+        'verbose': 0  # Keep CV silent to avoid spamming 3x logs, we will print the result manually
+    }
+
+    # 3. Run Cross-Validation
+    if verbose:
+        print(f"Running {folds}-fold CV to find optimal iterations...")
+
+    cv_data: pd.DataFrame = cv(
+        pool=train_pool,
+        params=params,
+        fold_count=folds,          # Split data into 3 (or more) parts
+        early_stopping_rounds=50,  # Stop if validation MAE doesn't improve for 50 rounds
+        shuffle=True,              # Important: shuffle data before splitting
+        seed=seed,
+        logging_level='Verbose' if verbose else 'Silent'
+    )
+
+    # 4. Extract the Best Iteration
+    # cv_data is a DataFrame with columns like 'test-MAE-mean' and 'train-MAE-mean'
+    best_iteration = cv_data['test-MAE-mean'].idxmin()
+    best_mae = cv_data['test-MAE-mean'].min()
+
+    if verbose:
+        print(f"  > Optimal Iterations Found: {best_iteration}")
+        print(f"  > Best CV MAE: {best_mae:.4f}")
+
+    # 5. Retrain Final Model
+    # We initialize a NEW model using the discovered best_iteration
+    final_model = CatBoostRegressor(
+        iterations=best_iteration, # <--- The auto-tuned value
+        learning_rate=0.01,
+        depth=8,
+        loss_function="MAE",
+        eval_metric="MAE",
+        random_seed=seed,
+        verbose=200 if verbose else 0
+    )
+
+    # Fit on the FULL dataset (train_pool)
+    return final_model.fit(train_pool)
 
 
 def predict(model: CatBoostRegressor, df: pd.DataFrame, threshold: int, lags=LAGS, rolling=ROLLING):
