@@ -74,7 +74,11 @@ def _metric1(df_actual: pd.DataFrame, df_pred: pd.DataFrame, df_aux: pd.DataFram
     n1 = bucket1[["country", "brand_name"]].drop_duplicates().shape[0]
     n2 = bucket2[["country", "brand_name"]].drop_duplicates().shape[0]
 
-    return (2/n1) * bucket1["PE"].sum() + (1/n2) * bucket2["PE"].sum()
+    total = 0
+    total += (2/n1) * bucket1["PE"].sum() if n1 > 0 else 0
+    total += (1/n2) * bucket2["PE"].sum() if n2 > 0 else 0
+
+    return total
 
 
 def compute_metric1(
@@ -155,7 +159,11 @@ def _metric2(df_actual: pd.DataFrame, df_pred: pd.DataFrame, df_aux: pd.DataFram
     n1 = bucket1[["country", "brand_name"]].drop_duplicates().shape[0]
     n2 = bucket2[["country", "brand_name"]].drop_duplicates().shape[0]
 
-    return (2/n1) * bucket1["PE"].sum() + (1/n2) * bucket2["PE"].sum()
+    total = 0
+    total += (2/n1) * bucket1["PE"].sum() if n1 > 0 else 0
+    total += (1/n2) * bucket2["PE"].sum() if n2 > 0 else 0
+
+    return total
 
 
 def compute_metric2(

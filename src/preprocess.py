@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from .consts import LAGS, ROLLING
-from typing import Union
+from typing import Union, Optional
 
 
 month_to_int = {
@@ -59,15 +59,60 @@ def create_mean_targets(df: pd.DataFrame, rolling_mean: bool) -> pd.DataFrame:
 def pre_features(df: pd.DataFrame, normalize: bool) -> pd.DataFrame:
     pre = df[df["months_postgx"] < 0]
 
-    pre_stats = pre.groupby(["country", "brand_name"])["target_norm" if normalize else "volume"].agg(
+    target_col = "target_norm" if normalize else "volume"
+
+    # --- global pre stats ---
+    pre_stats = pre.groupby(["country", "brand_name"])[target_col].agg(
         pre_mean="mean",
         pre_std="std",
         pre_min="min",
         pre_max="max",
-        pre_trend=lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)>1 else 0
+        pre_trend=lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) > 1 else 0,
     )
 
     df = df.merge(pre_stats, on=["country", "brand_name"], how="left", validate="many_to_one")
+
+    # # helper fns operating on a Series ordered by months_postgx
+    # def _lastk_mean(x, k):
+    #     # x = x.dropna()
+    #     assert not x.isna().any()
+    #     return x.tail(k).mean() if len(x) else 0.0
+
+    # def _slope_tail(x, k):
+    #     x = x.tail(k)
+    #     # x = x.dropna()
+    #     assert not x.isna().any()
+    #     if len(x) <= 1:
+    #         return 0.0
+    #     return np.polyfit(np.arange(len(x)), x, 1)[0]
+
+    # pre_shape = pre.sort_values("months_postgx").groupby(["country", "brand_name"])[target_col].agg(
+    #     pre12_mean_tmp=lambda x: _lastk_mean(x, 12),
+    #     last3_mean_tmp=lambda x: _lastk_mean(x, 3),
+    #     last6_mean_tmp=lambda x: _lastk_mean(x, 6),
+    #     slope_last6_tmp=lambda x: _slope_tail(x, 6),
+    #     slope_last12_tmp=lambda x: _slope_tail(x, 12),
+    # )
+
+
+    # # ratios + slope change + volatility
+    # eps = 1e-9
+    # pre_shape["ratio_last3_pre12"] = pre_shape["last3_mean_tmp"] / (pre_shape["pre12_mean_tmp"] + eps)
+    # pre_shape["ratio_last6_pre12"] = pre_shape["last6_mean_tmp"] / (pre_shape["pre12_mean_tmp"] + eps)
+    # pre_shape["slope_change_6_12"] = pre_shape["slope_last6_tmp"] - pre_shape["slope_last12_tmp"]
+
+    # # coefficient of variation (robust volatility proxy)
+    # pre_shape["pre_cv"] = pre_stats["pre_std"] / (pre_stats["pre_mean"] + eps)
+
+    # # keep only engineered cols
+    # pre_shape = pre_shape[[
+    #     "ratio_last3_pre12",
+    #     "ratio_last6_pre12",
+    #     "slope_change_6_12",
+    #     "pre_cv",
+    # ]]
+
+    # df = df.merge(pre_shape, on=["country", "brand_name"], how="left", validate="many_to_one")
 
     windows = {
         "t1": (-24, -22),
@@ -85,20 +130,19 @@ def pre_features(df: pd.DataFrame, normalize: bool) -> pd.DataFrame:
     for name, (start, end) in windows.items():
         tmp = (
             pre[pre["months_postgx"].between(start, end)]
-            .groupby(["country", "brand_name"])["target_norm" if normalize else "volume"]
+            .groupby(["country", "brand_name"])[target_col]
             .agg(
                 **{
                     f"{name}_mean": "mean",
                     f"{name}_std": "std",
                     f"{name}_min": "min",
                     f"{name}_max": "max",
-                    f"{name}_trend": lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)>1 else 0,
+                    f"{name}_trend": lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) > 1 else 0,
                 }
             )
         )
         trimester_frames.append(tmp)
 
-    # Combine trimester stats
     trimester_stats = pd.concat(trimester_frames, axis=1)
 
     return df.merge(trimester_stats, on=["country", "brand_name"], how="left", validate="many_to_one")
@@ -122,6 +166,75 @@ def n_gxs_features(df: pd.DataFrame, lags=LAGS, rolling=ROLLING) -> pd.DataFrame
     df['ngxs_roll{r}_std'.format(r=rolling)] = df.groupby(["country", "brand_name"])["n_gxs"].rolling(rolling).mean().reset_index()['n_gxs']
 
     return df
+
+
+def build_bucket_dataset(df: pd.DataFrame, df_aux: Optional[pd.DataFrame], scenario: str) -> pd.DataFrame:
+    base = (
+        df.sort_values("months_postgx")
+          .groupby(["country", "brand_name"], as_index=False)
+          .first()
+    )
+
+    # ----- generic snapshots (less noisy than rolling) -----
+    for m in [0, 6, 12, 23]:
+        snap = df.loc[df["months_postgx"] == m, ["country", "brand_name", "n_gxs"]]
+        snap = snap.rename(columns={"n_gxs": f"n_gxs_{m}"})
+        base = base.merge(snap, on=["country", "brand_name"], how="left")
+    base['n_gxs_trend'] = (df[df["months_postgx"] >= 0]
+        .groupby(["country", "brand_name"])["n_gxs"]
+        .apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)>1 else 0)
+        .reset_index()['n_gxs']
+    )
+
+    # ----- scenario 2 extra post-0..5 early erosion features -----
+    if scenario == "s2":
+        post = df[df["months_postgx"].between(0, 5)].copy()
+
+        post_feats = (
+            post.groupby(["country", "brand_name"])["target_norm"]
+                .agg(
+                    post0_5_mean="mean",
+                    post0_5_min="min",
+                    post0_5_max="max",
+                    post0_5_std="std",
+                    post0_5_trend=lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x)>1 else 0
+                )
+                .reset_index()
+        )
+
+        # early drop 0->1 if available
+        post01 = (
+            post[post["months_postgx"].isin([0, 1])]
+            .pivot_table(index=["country", "brand_name"],
+                         columns="months_postgx",
+                         values="target_norm")
+            .reset_index()
+        )
+        if 0 in post01.columns and 1 in post01.columns:
+            post01["post_drop0_1"] = post01[1] - post01[0]
+        else:
+            post01["post_drop0_1"] = 0.0
+        post01 = post01[["country", "brand_name", "post_drop0_1"]]
+
+        base = base.merge(post_feats, on=["country", "brand_name"], how="left")
+        base = base.merge(post01, on=["country", "brand_name"], how="left")
+        # base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]] = \
+        #     base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]].fillna(0)
+        if base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]].isna().any().any():
+            raise ValueError("NAs in post-0..5 early erosion features")
+
+    if df_aux is None:
+        return base
+
+    # ----- attach bucket label -----
+    y = df_aux[["country", "brand_name", "bucket"]].copy()
+    base = base.merge(y, on=["country", "brand_name"], how="inner")
+
+    # map bucket {1,2} -> label {1,0} (positive = high erosion)
+    base["label"] = (base["bucket"] == 1).astype(int)
+    base = base.drop(columns=["bucket"])
+
+    return base
 
 
 def general_preprocessing(

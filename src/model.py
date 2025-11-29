@@ -1,23 +1,24 @@
 from catboost import CatBoostRegressor, Pool, cv
 import pandas as pd
 import numpy as np
+from typing import Union, Optional
 from .consts import LAGS, ROLLING
 
-cat_features = [
-    'month', 'ther_area', 'main_package',
-    'biological', 'small_molecule'
-]
+cat_features = ['month', 'ther_area', 'main_package', 'biological', 'small_molecule']
 
 num_features = [
-    'n_gxs', 'hospital_rate',
-    'Avgj', 'pre_mean', 'pre_std',
-    'pre_min', 'pre_max', 'pre_trend', 't1_mean', 't1_std', 't1_min',
-    't1_max', 't1_trend', 't2_mean', 't2_std', 't2_min', 't2_max',
-    't2_trend', 't3_mean', 't3_std', 't3_min', 't3_max', 't3_trend',
-    't4_mean', 't4_std', 't4_min', 't4_max', 't4_trend', 't5_mean',
-    't5_std', 't5_min', 't5_max', 't5_trend', 't6_mean', 't6_std', 't6_min',
-    't6_max', 't6_trend', 't7_mean', 't7_std', 't7_min', 't7_max',
-    't7_trend', 't8_mean', 't8_std', 't8_min', 't8_max', 't8_trend',
+    'n_gxs', 'hospital_rate', 'Avgj',
+    'pre_mean', 'pre_std', 'pre_min', 'pre_max', 'pre_trend',
+    't1_mean', 't1_std', 't1_min', 't1_max', 't1_trend',
+    't2_mean', 't2_std', 't2_min', 't2_max', 't2_trend',
+    't3_mean', 't3_std', 't3_min', 't3_max', 't3_trend',
+    't4_mean', 't4_std', 't4_min', 't4_max', 't4_trend',
+    't5_mean', 't5_std', 't5_min', 't5_max', 't5_trend',
+    't6_mean', 't6_std', 't6_min', 't6_max', 't6_trend',
+    't7_mean', 't7_std', 't7_min', 't7_max', 't7_trend',
+    't8_mean', 't8_std', 't8_min', 't8_max', 't8_trend',
+    # "ratio_last3_pre12", "ratio_last6_pre12",
+    # "slope_change_6_12", "pre_cv",
     'month_sin', 'month_cos', 'months_postgx',
 ]
 
@@ -34,18 +35,19 @@ num_features.append(f"roll{ROLLING}_std")
 features = cat_features + num_features
 
 
-def fit_model(df: pd.DataFrame, scenario: str, iters=2000, seed=None, verbose=True, predict_avg=False) -> CatBoostRegressor:
+def fit_model(df: pd.DataFrame, scenario: str, iters=2000, lr=0.03, seed=42, verbose=True, predict_avg=False) -> CatBoostRegressor:
     threshold = 0 if scenario == "s1" else 6
     train_pool = Pool(
         data=df[df['months_postgx'] >= threshold][features],
         label=df[df['months_postgx'] >= threshold]['target_norm_avg' if predict_avg else 'target_norm'],
-        cat_features=[features.index(c) for c in cat_features]
+        cat_features=[features.index(c) for c in cat_features],
+        feature_names=features,
+        weight=df[df['months_postgx'] >= threshold][f'weight_{scenario}']
     )
-    train_pool.set_weight(df[df['months_postgx'] >= threshold][f'weight_{scenario}'])
 
     model = CatBoostRegressor(
         iterations=iters,
-        learning_rate=0.03,
+        learning_rate=lr,
         depth=8,
         loss_function="MAE",
         eval_metric="MAE",
@@ -56,7 +58,7 @@ def fit_model(df: pd.DataFrame, scenario: str, iters=2000, seed=None, verbose=Tr
     return model.fit(train_pool)
 
 
-def fit_model_cv(df: pd.DataFrame, scenario: str, iters=10000, seed=None, verbose=True, predict_avg=False, folds=3) -> CatBoostRegressor:
+def fit_model_cv(df: pd.DataFrame, scenario: str, iters=2000, lr=0.03, seed=42, verbose=True, predict_avg=False, folds=3) -> CatBoostRegressor:
     # 1. Prepare Data (Identical to your original function)
     threshold = 0 if scenario == "s1" else 6
 
@@ -73,7 +75,7 @@ def fit_model_cv(df: pd.DataFrame, scenario: str, iters=10000, seed=None, verbos
     # Note: We move params into a dict to pass to the cv() function
     params = {
         'iterations': iters,
-        'learning_rate': 0.01,
+        'learning_rate': lr,
         'depth': 8,
         'loss_function': "MAE",
         'eval_metric': "MAE",
@@ -108,7 +110,7 @@ def fit_model_cv(df: pd.DataFrame, scenario: str, iters=10000, seed=None, verbos
     # We initialize a NEW model using the discovered best_iteration
     final_model = CatBoostRegressor(
         iterations=best_iteration, # <--- The auto-tuned value
-        learning_rate=0.01,
+        learning_rate=lr,
         depth=8,
         loss_function="MAE",
         eval_metric="MAE",
@@ -120,12 +122,12 @@ def fit_model_cv(df: pd.DataFrame, scenario: str, iters=10000, seed=None, verbos
     return final_model.fit(train_pool)
 
 
-def predict(model: CatBoostRegressor, df: pd.DataFrame, threshold: int, lags=LAGS, rolling=ROLLING):
+def predict(model: Union[CatBoostRegressor, list[CatBoostRegressor]], df: pd.DataFrame, threshold: int, votes: Optional[pd.DataFrame]=None, lags=LAGS, rolling=ROLLING):
     preds = []
     buffer_size = max(rolling, lags)
     groups = df.groupby(["country", "brand_name"])
 
-    for _, g in groups:
+    for (country, brand), g in groups:
 
         g = g.sort_values("months_postgx")
 
@@ -147,7 +149,15 @@ def predict(model: CatBoostRegressor, df: pd.DataFrame, threshold: int, lags=LAG
             X_row = g.loc[idx, features]
 
             # Predict
-            pred = model.predict(X_row.values.reshape(1, -1))[0]
+            if isinstance(model, list):
+                votes_row: pd.DataFrame = votes[(votes["country"] == country) & (votes["brand_name"] == brand) & (votes["months_postgx"] == row["months_postgx"])]
+                assert len(votes_row) == 1
+                votes_row = votes_row.iloc[:, 3:].values.flatten()
+                if len(votes_row) != len(model):
+                    raise ValueError(f"Votes shape mismatch: {len(votes_row)} != {len(model)}")
+                pred = (votes_row * np.array([m.predict(X_row.values.reshape(1, -1))[0] for m in model])).sum()
+            else:
+                pred = model.predict(X_row.values.reshape(1, -1))[0]
 
             # Save prediction
             history.append(pred)

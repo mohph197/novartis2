@@ -14,7 +14,7 @@ def merge_pred_true(df_pred: pd.DataFrame, df_true: pd.DataFrame) -> pd.DataFram
     )
 
 
-def plot_static_samples(df_pred: pd.DataFrame, df_true: pd.DataFrame, n_samples=9):
+def plot_static_samples(df_pred: pd.DataFrame, df_true: pd.DataFrame, n_samples=9, title_prefix=""):
     """
     Selects 'n_samples' random country-brand combinations and plots them
     in a grid layout with 3 plots per row using Matplotlib.
@@ -65,7 +65,7 @@ def plot_static_samples(df_pred: pd.DataFrame, df_true: pd.DataFrame, n_samples=
         ax.plot(subset['months_postgx'], subset['vol_true'],
                  color='tab:orange', linestyle='--', label='Actual (Value True)', linewidth=2)
 
-        ax.set_title(f'{combo}')
+        ax.set_title(f'{title_prefix}{combo}')
         ax.set_xlabel('Months Post GX')
         ax.set_ylabel('Units')
         ax.legend(loc='best', fontsize='small')
@@ -78,7 +78,7 @@ def plot_static_samples(df_pred: pd.DataFrame, df_true: pd.DataFrame, n_samples=
     plt.show()
 
 
-def plot_interactive_comparison(df_pred: pd.DataFrame, df_true: pd.DataFrame):
+def plot_interactive_comparison(df_pred: pd.DataFrame, df_true: pd.DataFrame, title_prefix=""):
     """
     Creates a single interactive Plotly chart with a dropdown menu
     to switch between all country-brand combinations.
@@ -134,7 +134,7 @@ def plot_interactive_comparison(df_pred: pd.DataFrame, df_true: pd.DataFrame):
         step = dict(
             method="update",
             args=[{"visible": [False] * len(fig.data)},
-                  {"title": f"Prediction vs Actual: {combo}"}],
+                  {"title": f"{title_prefix}{combo}"}],
             label=combo
         )
         # Toggle the specific pair of traces for this combo
@@ -145,7 +145,7 @@ def plot_interactive_comparison(df_pred: pd.DataFrame, df_true: pd.DataFrame):
 
     fig.update_layout(
         updatemenus=[dict(active=0, buttons=steps)],
-        title=f"Prediction vs Actual: {unique_combos[0]}",
+        title=f"{title_prefix}{unique_combos[0]}",
         xaxis_title="Months Post GX",
         yaxis_title="Units",
         template="plotly_white"
