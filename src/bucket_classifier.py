@@ -20,8 +20,6 @@ def num_features(scenario: str):
         'n_gxs_0', 'n_gxs_6', 'n_gxs_12', 'n_gxs_23', 'n_gxs_trend',
         'country_mge_min', 'country_mge_max', 'country_mge_mean', 'country_mge_std',
         'brand_mge_min', 'brand_mge_max', 'brand_mge_mean', 'brand_mge_std',
-        # 'ratio_last3_pre12', 'ratio_last6_pre12',
-        # 'slope_change_6_12', 'pre_cv',
     ]
 
     if scenario == 's2':

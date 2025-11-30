@@ -75,48 +75,6 @@ def pre_features(df: pd.DataFrame, normalize: bool) -> pd.DataFrame:
 
     df = df.merge(pre_stats, on=["country", "brand_name"], how="left", validate="many_to_one")
 
-    # # helper fns operating on a Series ordered by months_postgx
-    # def _lastk_mean(x, k):
-    #     # x = x.dropna()
-    #     assert not x.isna().any()
-    #     return x.tail(k).mean() if len(x) else 0.0
-
-    # def _slope_tail(x, k):
-    #     x = x.tail(k)
-    #     # x = x.dropna()
-    #     assert not x.isna().any()
-    #     if len(x) <= 1:
-    #         return 0.0
-    #     return np.polyfit(np.arange(len(x)), x, 1)[0]
-
-    # pre_shape = pre.sort_values("months_postgx").groupby(["country", "brand_name"])[target_col].agg(
-    #     pre12_mean_tmp=lambda x: _lastk_mean(x, 12),
-    #     last3_mean_tmp=lambda x: _lastk_mean(x, 3),
-    #     last6_mean_tmp=lambda x: _lastk_mean(x, 6),
-    #     slope_last6_tmp=lambda x: _slope_tail(x, 6),
-    #     slope_last12_tmp=lambda x: _slope_tail(x, 12),
-    # )
-
-
-    # # ratios + slope change + volatility
-    # eps = 1e-9
-    # pre_shape["ratio_last3_pre12"] = pre_shape["last3_mean_tmp"] / (pre_shape["pre12_mean_tmp"] + eps)
-    # pre_shape["ratio_last6_pre12"] = pre_shape["last6_mean_tmp"] / (pre_shape["pre12_mean_tmp"] + eps)
-    # pre_shape["slope_change_6_12"] = pre_shape["slope_last6_tmp"] - pre_shape["slope_last12_tmp"]
-
-    # # coefficient of variation (robust volatility proxy)
-    # pre_shape["pre_cv"] = pre_stats["pre_std"] / (pre_stats["pre_mean"] + eps)
-
-    # # keep only engineered cols
-    # pre_shape = pre_shape[[
-    #     "ratio_last3_pre12",
-    #     "ratio_last6_pre12",
-    #     "slope_change_6_12",
-    #     "pre_cv",
-    # ]]
-
-    # df = df.merge(pre_shape, on=["country", "brand_name"], how="left", validate="many_to_one")
-
     windows = {
         "t1": (-24, -22),
         "t2": (-21, -19),
@@ -221,8 +179,6 @@ def build_bucket_dataset(df: pd.DataFrame, df_mge: pd.DataFrame, df_aux: Optiona
 
         base = base.merge(post_feats, on=["country", "brand_name"], how="left")
         base = base.merge(post01, on=["country", "brand_name"], how="left")
-        # base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]] = \
-        #     base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]].fillna(0)
         if base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]].isna().any().any():
             raise ValueError("NAs in post-0..5 early erosion features")
 
@@ -289,7 +245,6 @@ def general_preprocessing(
     df = create_mean_targets(df, rolling_mean, calibrate_target_avg)
     df = pre_features(df, normalize=normalize_pre)
     df = month_features(df)
-    # df = n_gxs_features(df)
 
     if is_test:
         return df, sub_df
@@ -392,7 +347,6 @@ def create_aux(df: pd.DataFrame) -> pd.DataFrame:
     df_aux['volume_norm'] = df_aux['volume'] / df_aux['Avgj']
     df_aux = df_aux.groupby(['country','brand_name'])['volume_norm'].mean().rename('MGE').reset_index()
     df_aux['bucket'] = df_aux['MGE'].apply(lambda x: 1 if x <= 0.25 else 2)
-    # df_aux = df_aux.drop(columns=['MGE'])
     df_aux["avg_vol"] = df[df['months_postgx'] >= 0].groupby(["country", "brand_name"])["Avgj"].first().reset_index()["Avgj"]
 
     return df_aux
