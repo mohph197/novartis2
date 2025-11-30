@@ -63,7 +63,9 @@ def fit_bucket_classifier(base: pd.DataFrame, scenario: str, iters=2000, lr=0.03
     return model.fit(pool)
 
 
-def predict_bucket1_proba(model: CatBoostClassifier, base: pd.DataFrame, scenario: str) -> np.ndarray:
+def predict_bucket1_proba(model: CatBoostClassifier, df: pd.DataFrame, df_mge: pd.DataFrame, scenario: str) -> np.ndarray:
+    base = build_bucket_dataset(df, df_mge, None, scenario)
+
     features = cat_features + num_features(scenario)
     return model.predict_proba(base[features])[:, 1]
 
@@ -80,8 +82,8 @@ def shift_probs_to_make_tstar_half(p, t_star):
     return sigmoid(logit(p) + delta)
 
 
-def predict_probas(model: CatBoostClassifier, df: pd.DataFrame, df_aux: pd.DataFrame, scenario: str, shift=True) -> pd.DataFrame:
-    base = build_bucket_dataset(df, df_aux, scenario, is_test=True)
+def predict_probas(model: CatBoostClassifier, df: pd.DataFrame, df_mge: pd.DataFrame, scenario: str, shift=True) -> pd.DataFrame:
+    base = build_bucket_dataset(df, df_mge, None, scenario)
 
     features = cat_features + num_features(scenario)
     probs = model.predict_proba(base[features])
