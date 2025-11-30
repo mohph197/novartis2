@@ -171,7 +171,7 @@ def n_gxs_features(df: pd.DataFrame, lags=LAGS, rolling=ROLLING) -> pd.DataFrame
     return df
 
 
-def build_bucket_dataset(df: pd.DataFrame, df_aux: Optional[pd.DataFrame], scenario: str) -> pd.DataFrame:
+def build_bucket_dataset(df: pd.DataFrame, df_aux: pd.DataFrame, scenario: str, is_test=False) -> pd.DataFrame:
     base = (
         df.sort_values("months_postgx")
           .groupby(["country", "brand_name"], as_index=False)
@@ -226,12 +226,29 @@ def build_bucket_dataset(df: pd.DataFrame, df_aux: Optional[pd.DataFrame], scena
         if base[["post0_5_mean","post0_5_min","post0_5_max","post0_5_std","post0_5_trend","post_drop0_1"]].isna().any().any():
             raise ValueError("NAs in post-0..5 early erosion features")
 
-    if df_aux is None:
+    # ----- attach mge stats -----
+    base = base.merge(df_aux[[
+        'country', 'brand_name',
+        'country_mge_min', 'country_mge_max', 'country_mge_mean', 'country_mge_std',
+        'brand_mge_min', 'brand_mge_max', 'brand_mge_mean', 'brand_mge_std',
+    ]], on=['country', 'brand_name'], how='left', validate='one_to_one')
+
+    # Fill NaN mge stats with stats of global MGE
+    base['country_mge_min'] = base['country_mge_min'].fillna(df_aux['MGE'].min())
+    base['country_mge_max'] = base['country_mge_max'].fillna(df_aux['MGE'].max())
+    base['country_mge_mean'] = base['country_mge_mean'].fillna(df_aux['MGE'].mean())
+    base['country_mge_std'] = base['country_mge_std'].fillna(df_aux['MGE'].std())
+    base['brand_mge_min'] = base['brand_mge_min'].fillna(df_aux['MGE'].min())
+    base['brand_mge_max'] = base['brand_mge_max'].fillna(df_aux['MGE'].max())
+    base['brand_mge_mean'] = base['brand_mge_mean'].fillna(df_aux['MGE'].mean())
+    base['brand_mge_std'] = base['brand_mge_std'].fillna(df_aux['MGE'].std())
+
+    if is_test:
         return base
 
     # ----- attach bucket label -----
     y = df_aux[["country", "brand_name", "bucket"]].copy()
-    base = base.merge(y, on=["country", "brand_name"], how="inner")
+    base = base.merge(y, on=["country", "brand_name"], how="inner", validate="one_to_one")
 
     # map bucket {1,2} -> label {1,0} (positive = high erosion)
     base["label"] = (base["bucket"] == 1).astype(int)
@@ -360,7 +377,25 @@ def create_aux(df: pd.DataFrame) -> pd.DataFrame:
     df_aux['volume_norm'] = df_aux['volume'] / df_aux['Avgj']
     df_aux = df_aux.groupby(['country','brand_name'])['volume_norm'].mean().rename('MGE').reset_index()
     df_aux['bucket'] = df_aux['MGE'].apply(lambda x: 1 if x <= 0.25 else 2)
-    df_aux = df_aux.drop(columns=['MGE'])
+    # df_aux = df_aux.drop(columns=['MGE'])
     df_aux["avg_vol"] = df[df['months_postgx'] >= 0].groupby(["country", "brand_name"])["Avgj"].first().reset_index()["Avgj"]
+
+    country_mge_stats = df_aux.groupby('country')['MGE'].agg(
+        country_mge_min="min",
+        country_mge_max="max",
+        country_mge_mean="mean",
+        country_mge_std="std",
+    )
+
+    df_aux = df_aux.merge(country_mge_stats, on='country', how='left', validate='many_to_one')
+
+    mge_stats = df_aux.groupby('brand_name')['MGE'].agg(
+        brand_mge_min="min",
+        brand_mge_max="max",
+        brand_mge_mean="mean",
+        brand_mge_std="std",
+    )
+
+    df_aux = df_aux.merge(mge_stats, on='brand_name', how='left', validate='many_to_one')
 
     return df_aux

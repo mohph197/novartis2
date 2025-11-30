@@ -17,15 +17,17 @@ def num_features(scenario: str):
         't6_mean', 't6_std', 't6_min', 't6_max', 't6_trend',
         't7_mean', 't7_std', 't7_min', 't7_max', 't7_trend',
         't8_mean', 't8_std', 't8_min', 't8_max', 't8_trend',
-        # "ratio_last3_pre12", "ratio_last6_pre12",
-        # "slope_change_6_12", "pre_cv",
-        "n_gxs_0", "n_gxs_6", "n_gxs_12", "n_gxs_23", "n_gxs_trend"
+        'n_gxs_0', 'n_gxs_6', 'n_gxs_12', 'n_gxs_23', 'n_gxs_trend',
+        'country_mge_min', 'country_mge_max', 'country_mge_mean', 'country_mge_std',
+        'brand_mge_min', 'brand_mge_max', 'brand_mge_mean', 'brand_mge_std',
+        # 'ratio_last3_pre12', 'ratio_last6_pre12',
+        # 'slope_change_6_12', 'pre_cv',
     ]
 
-    if scenario == "s2":
+    if scenario == 's2':
         f += [
-            "post0_5_mean","post0_5_min","post0_5_max","post0_5_std",
-            "post0_5_trend","post_drop0_1"
+            'post0_5_mean','post0_5_min','post0_5_max','post0_5_std',
+            'post0_5_trend','post_drop0_1'
         ]
 
     return f
@@ -78,8 +80,8 @@ def shift_probs_to_make_tstar_half(p, t_star):
     return sigmoid(logit(p) + delta)
 
 
-def predict_probas(model: CatBoostClassifier, df: pd.DataFrame, scenario: str, shift=True) -> pd.DataFrame:
-    base = build_bucket_dataset(df, None, scenario)
+def predict_probas(model: CatBoostClassifier, df: pd.DataFrame, df_aux: pd.DataFrame, scenario: str, shift=True) -> pd.DataFrame:
+    base = build_bucket_dataset(df, df_aux, scenario, is_test=True)
 
     features = cat_features + num_features(scenario)
     probs = model.predict_proba(base[features])
